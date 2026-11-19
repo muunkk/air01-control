@@ -43,6 +43,9 @@ Mac (`brew install gh && gh auth login`).
 
 To ship an update: bump `VERSION` in a PR, merge it, then run `release.sh` from `main`.
 
+The app icon is drawn in code: `tools/make_icon.sh` regenerates `Resources/AppIcon.icns`
+from `tools/make_icon.swift`.
+
 Diagnostics (from the built binary in `Contents/MacOS/Air01Control`):
 
 - `--probe` lists matching HID devices and does a read-only settings read.
