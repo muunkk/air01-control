@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: KeyboardModel
+    @ObservedObject var updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,9 +14,69 @@ struct ContentView: View {
             } else {
                 StatusPanel(model: model)
             }
+            Divider()
+            UpdateFooter(updater: updater)
         }
         .frame(width: 460)
         .frame(minHeight: 520, idealHeight: 720)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .alert(alertTitle, isPresented: $updater.showResult) {
+            if case .available = updater.state {
+                Button("Install and Relaunch") { Task { await updater.install() } }
+                Button("Later", role: .cancel) {}
+            } else if case .failed = updater.state {
+                Button("Open Releases Page") { NSWorkspace.shared.open(Updater.releasesURL) }
+                Button("OK", role: .cancel) {}
+            } else {
+                Button("OK", role: .cancel) {}
+            }
+        } message: {
+            Text(alertMessage)
+        }
+    }
+
+    private var alertTitle: String {
+        switch updater.state {
+        case .available(let v, _): return "Air01 Control \(v) is available"
+        case .failed: return "Couldn't check for updates"
+        default: return "You're up to date"
+        }
+    }
+
+    private var alertMessage: String {
+        switch updater.state {
+        case .available(_, let notes): return notes.isEmpty ? "You have \(updater.currentVersion)." : notes
+        case .failed(let msg): return msg
+        default: return "Air01 Control \(updater.currentVersion) is the latest version."
+        }
+    }
+}
+
+private struct UpdateFooter: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Version \(updater.currentVersion)")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            switch updater.state {
+            case .checking:
+                ProgressView().controlSize(.small)
+                Text("Checking…").font(.caption).foregroundStyle(.secondary)
+            case .installing:
+                ProgressView().controlSize(.small)
+                Text("Installing update…").font(.caption).foregroundStyle(.secondary)
+            case .available(let v, _):
+                Button("Update to \(v)") { Task { await updater.install() } }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+            default:
+                Button("Check for Updates") { Task { await updater.check(manual: true) } }
+                    .buttonStyle(.link).font(.caption)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 }
 
@@ -187,12 +249,18 @@ private struct SettingsForm: View {
 
             if let p = model.profile {
                 Section {
-                    Picker("Profile", selection: Binding(get: { p }, set: { model.setProfile($0) })) {
-                        ForEach(0..<4) { Text("\($0 + 1)").tag($0) }
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+                        ForEach(0..<4) { i in
+                            ProfileCard(number: i + 1, active: i == p, summary: model.keymapSummary(i)) {
+                                model.setProfile(i)
+                            }
+                        }
                     }
-                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Profiles")
                 } footer: {
-                    Text("Each profile keeps its own lighting.").font(.caption).foregroundStyle(.secondary)
+                    Text("Click a profile to switch to it. Profiles hold separate key layouts; lighting, colours and effects are shared by all four.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
@@ -209,6 +277,47 @@ private struct SettingsForm: View {
         }
         .formStyle(.grouped)
         .disabled(!model.writable)
+    }
+}
+
+private struct ProfileCard: View {
+    let number: Int
+    let active: Bool
+    let summary: String?
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Profile \(number)").font(.headline)
+                    Spacer()
+                    if active {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                    }
+                }
+                Text(active ? "Active" : "Click to switch")
+                    .font(.caption.weight(active ? .semibold : .regular))
+                    .foregroundStyle(active ? Color.accentColor : .secondary)
+                Text(summary ?? "Key layout not read")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2, reservesSpace: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(active ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(active ? Color.accentColor.opacity(0.6) : Color.primary.opacity(0.08))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .help(active ? "This profile is active" : "Switch to profile \(number)")
     }
 }
 

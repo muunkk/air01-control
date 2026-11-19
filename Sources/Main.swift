@@ -7,6 +7,21 @@ enum Entry {
         let args = CommandLine.arguments
         if args.contains("--selftest") { exit(SelfTest.run() ? 0 : 1) }
         if args.contains("--probe") { Probe.run(); exit(0) }
+        if args.contains("--keymaps") { Probe.keymaps(); exit(0) }
+        if args.contains("--update-now") {
+            // Same path as the in-app button, without the UI.
+            MainActor.assumeIsolated {
+                let u = Updater()
+                Task {
+                    await u.check(manual: false)
+                    print("current \(u.currentVersion): \(u.state)")
+                    if case .available = u.state { await u.install() }
+                    print("\(u.state)")
+                    exit(0)
+                }
+            }
+            dispatchMain()
+        }
         if let i = args.firstIndex(of: "--snapshot"), args.count > i + 1 {
             MainActor.assumeIsolated { Snapshotter.render(to: args[i + 1]) }
             exit(0)
@@ -18,12 +33,19 @@ enum Entry {
 struct Air01App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = KeyboardModel()
+    @StateObject private var updater = Updater()
 
     var body: some Scene {
         Window("Air01 Control", id: "main") {
-            ContentView(model: model)
+            ContentView(model: model, updater: updater)
+                .task { await updater.check(manual: false) }
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Task { await updater.check(manual: true) } }
+            }
+        }
     }
 }
 
@@ -46,9 +68,11 @@ enum Snapshotter {
         for (name, link, look) in states {
             let model = KeyboardModel(preview: ())
             model.loadSample(link: link)
-            let host = NSHostingView(rootView: ContentView(model: model))
+            let updater = Updater()
+            if name == "settings-dark" { updater.state = .available(version: "1.2.0", notes: "") }
+            let host = NSHostingView(rootView: ContentView(model: model, updater: updater))
             host.appearance = NSAppearance(named: look)
-            let size = NSSize(width: 460, height: link == .usb ? 980 : 520)
+            let size = NSSize(width: 460, height: link == .usb ? 1240 : 560)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: look)
             window.contentView = host
@@ -86,6 +110,26 @@ enum Probe {
             print("side light: \(snap.side.map(describe) ?? "-")")
             print("profile: \(snap.profile.map { "\($0 + 1)" } ?? "-")  debounce: \(snap.debounce.map(String.init) ?? "-")  autoOS: \(snap.autoOS.map { $0 ? "on" : "off" } ?? "-")")
             if let t = snap.sleep { print("sleep (s): BT \(t.sleepBT)/deep \(t.deepBT)  2.4G \(t.sleep24)/deep \(t.deep24)") }
+        } catch {
+            print("error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Read-only: every profile's keymap, compared against profile 1.
+    static func keymaps() {
+        let watcher = HIDWatcher(scheduleOnMainRunLoop: false)
+        guard let s = watcher.devices().first(where: \.isSettingsInterface) else { print("No USB settings interface."); return }
+        do {
+            let session = try KeyboardSession(s)
+            defer { session.close() }
+            guard BoardKind.from(id: try session.identify()).canWrite else { print("Not the confirmed Air01."); return }
+            let maps = try (0..<4).map { try session.readKeymap(profile: $0) }
+            for (p, m) in maps.enumerated() {
+                let diff = Keymap.differingSlots(maps[0], m)
+                let used = stride(from: 0, to: m.count, by: 4).filter { m[$0..<$0 + 4] != [0, 0, 0, 0] }.count
+                print("profile \(p + 1): \(m.count) bytes, \(used) assigned slots, differs from P1 in \(diff.count) slots \(diff.prefix(10))")
+            }
+            print("P1 first 32 bytes: " + maps[0].prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))
         } catch {
             print("error: \(error.localizedDescription)")
         }
