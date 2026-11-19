@@ -56,42 +56,6 @@ enum Keymap {
     static let bytes = 512
     static let slotSize = 4
 
-    /// Human-readable name for one 4-byte slot value. Byte 0 is the kind:
-    /// 0x00 keyboard usage (code in byte 1), 0x01 mouse, 0x03 media,
-    /// 0x09 macro, 0x0A board function.
-    static func describe(_ slot: ArraySlice<UInt8>) -> String {
-        let v = Array(slot)
-        guard v.count == 4 else { return "?" }
-        switch v[0] {
-        case 0x00: return v[1] == 0 ? "nothing" : usageName(v[1])
-        case 0x01: return "mouse button"
-        case 0x03: return "media key"
-        case 0x09: return "macro \(Int(v[2]) + 1)"
-        case 0x0A: return v[1] == 1 ? "Fn" : "board function"
-        default: return "special"
-        }
-    }
-
-    static func usageName(_ u: UInt8) -> String {
-        switch u {
-        case 0x04...0x1D: return String(UnicodeScalar(UInt8(ascii: "A") + (u - 0x04)))
-        case 0x1E...0x26: return String(u - 0x1D)
-        case 0x27: return "0"
-        case 0x3A...0x45: return "F\(u - 0x39)"
-        default: break
-        }
-        let names: [UInt8: String] = [
-            0x28: "Return", 0x29: "Esc", 0x2A: "Delete", 0x2B: "Tab", 0x2C: "Space", 0x2D: "-", 0x2E: "=",
-            0x2F: "[", 0x30: "]", 0x31: "\\", 0x33: ";", 0x34: "'", 0x35: "`", 0x36: ",", 0x37: ".", 0x38: "/",
-            0x39: "Caps Lock", 0x46: "Print Screen", 0x47: "Scroll Lock", 0x48: "Pause", 0x49: "Insert",
-            0x4A: "Home", 0x4B: "Page Up", 0x4C: "Forward Delete", 0x4D: "End", 0x4E: "Page Down",
-            0x4F: "→", 0x50: "←", 0x51: "↓", 0x52: "↑", 0x65: "Menu",
-            0xE0: "Left Ctrl", 0xE1: "Left Shift", 0xE2: "Left Option", 0xE3: "Left Cmd",
-            0xE4: "Right Ctrl", 0xE5: "Right Shift", 0xE6: "Right Option", 0xE7: "Right Cmd",
-        ]
-        return names[u] ?? String(format: "key 0x%02X", u)
-    }
-
     static func slot(_ m: [UInt8], _ s: Int) -> ArraySlice<UInt8> { m[(s * slotSize)..<((s + 1) * slotSize)] }
 
     /// Key slots whose 4-byte assignment differs between two keymaps.

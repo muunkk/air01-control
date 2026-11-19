@@ -158,14 +158,15 @@ final class KeyboardSession: @unchecked Sendable {
     }
 
     private func read() throws -> [UInt8] {
-        var buf = [UInt8](repeating: 0, count: Proto.reportLength + 1)
+        // IOKit gives report-ID-0 data starting at byte 0, with no ID prefix
+        // (hidapi adds one; IOKit doesn't). Never strip a leading byte: raw
+        // keymap pages legitimately start with 0x00.
+        var buf = [UInt8](repeating: 0, count: Proto.reportLength)
         var len = CFIndex(buf.count)
         let r = IOHIDDeviceGetReport(info.device, kIOHIDReportTypeFeature, 0, &buf, &len)
         guard r == kIOReturnSuccess else { throw HIDError.transfer(r) }
         guard len >= 8 else { throw HIDError.unexpected("Short reply from keyboard (\(len) bytes).") }
-        // Tolerate a leading report-ID byte if the stack keeps it.
-        if len == Proto.reportLength + 1 && buf[0] == 0 { return Array(buf[1...Proto.reportLength]) }
-        return Array(buf[0..<Proto.reportLength])
+        return buf
     }
 
     // Exchanges --------------------------------------------------------
@@ -184,9 +185,16 @@ final class KeyboardSession: @unchecked Sendable {
     }
 
     /// Send a SET (lands in flash) and enforce the quiet period after it.
-    func write(_ pkt: [UInt8]) throws {
+    func write(_ pkt: [UInt8], quiet: TimeInterval = KeyboardSession.flashQuiet) throws {
         try send(pkt)
-        quietUntil = Date().addingTimeInterval(KeyboardSession.flashQuiet)
+        quietUntil = Date().addingTimeInterval(quiet)
+    }
+
+    /// One raw page (no opcode echo) for bulk reads.
+    func readRawPage(_ pkt: [UInt8]) throws -> [UInt8] {
+        try send(pkt)
+        Thread.sleep(forTimeInterval: 0.010)
+        return try read()
     }
 
     func identify() throws -> UInt32 {
@@ -199,72 +207,3 @@ final class KeyboardSession: @unchecked Sendable {
     }
 }
 
-// MARK: - High-level reads/writes
-
-struct Snapshot {
-    var deviceID: UInt32
-    var kind: BoardKind
-    var firmware: String?
-    var led: Lighting?
-    var side: Lighting?
-    var profile: Int?
-    var debounce: Int?
-    var sleep: SleepTimes?
-    var autoOS: Bool?
-    var keymaps: [Int: [UInt8]] = [:]
-}
-
-extension KeyboardSession {
-    /// Read everything this board is known to support. Only shared opcodes
-    /// are sent until the board has identified as the confirmed gen2 Air01.
-    func readSnapshot() throws -> Snapshot {
-        let id = try identify()
-        let kind = BoardKind.from(id: id)
-        var s = Snapshot(deviceID: id, kind: kind)
-
-        s.led = (try? roundtrip(Proto.packet(Shared.getLed))).flatMap { Lighting(reply: $0, .air01Main) }
-        s.side = (try? roundtrip(Proto.packet(Shared.getSideLed))).flatMap { Lighting(reply: $0, .air01Side) }
-
-        guard kind.canWrite else { return s }
-
-        s.profile = (try? roundtrip(Proto.packet(Gen2.getProfile))).map { Int($0[1]) }
-        s.debounce = (try? roundtrip(Proto.packet(Gen2.getDebounce))).map { Int($0[1]) }
-        s.sleep = (try? roundtrip(Proto.packet(Gen2.getSleep))).flatMap { SleepTimes(reply: $0) }
-        s.autoOS = (try? roundtrip(Proto.packet(Gen2.getAutoOS))).map { $0[1] == 1 }
-        for p in 0..<4 { s.keymaps[p] = try? readKeymap(profile: p) }
-
-        // gen2 answers 0x80 with zeros over the cable; the keyboard's own
-        // version is then in the identify reply at bytes 7..8.
-        if let rev = (try? roundtrip(Proto.packet(Gen2.getRevision))).flatMap({ Identify.revisionWord($0, at: 1) })
-            ?? (try? roundtrip(Identify.request())).flatMap({ Identify.revisionWord($0, at: 7) }) {
-            s.firmware = Identify.format(revision: rev)
-        }
-        return s
-    }
-
-    /// Switch profile, wait out the flash commit, then confirm.
-    func switchProfile(_ p: Int) throws -> Int {
-        try write(Proto.packet(Gen2.setProfile, [UInt8(p)]))
-        let reply = try roundtrip(Proto.packet(Gen2.getProfile))
-        return Int(reply[1])
-    }
-
-    /// Read-only, works for any profile without switching. Raw pages carry
-    /// no echo, so the whole map is read twice and must match.
-    func readKeymap(profile: Int) throws -> [UInt8] {
-        func once() throws -> [UInt8] {
-            var m: [UInt8] = []
-            for page in 0..<8 {
-                try send(Proto.packet(Gen2.getKeymap, [UInt8(profile), 0xFF, UInt8(page), 0]))
-                Thread.sleep(forTimeInterval: 0.010)
-                m += try read()
-            }
-            return m
-        }
-        for _ in 0..<3 {
-            let a = try once(), b = try once()
-            if a == b { return a }
-        }
-        throw HIDError.unexpected("Profile \(profile + 1)'s key layout read back inconsistently.")
-    }
-}

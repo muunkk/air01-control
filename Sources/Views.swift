@@ -232,6 +232,7 @@ private struct StatusPanel: View {
 
 private struct SettingsForm: View {
     @ObservedObject var model: KeyboardModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
@@ -256,6 +257,12 @@ private struct SettingsForm: View {
                             }
                         }
                     }
+                    HStack {
+                        Text("Remap keys, add shortcuts and media keys, edit the Fn layer.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Edit Keys…") { openWindow(id: "keys") }
+                    }
                 } header: {
                     Text("Profiles")
                 } footer: {
@@ -274,9 +281,69 @@ private struct SettingsForm: View {
             if model.debounce != nil || model.sleep != nil || model.autoOS != nil {
                 DeviceSection(model: model)
             }
+
+            if model.writable {
+                BackupSection(model: model)
+            }
         }
         .formStyle(.grouped)
         .disabled(!model.writable)
+    }
+}
+
+private struct BackupSection: View {
+    @ObservedObject var model: KeyboardModel
+    @State private var confirmRestore: URL?
+
+    var body: some View {
+        Section {
+            if let (msg, f) = model.backupProgress {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(msg).font(.callout)
+                    ProgressView(value: f)
+                }
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Back up everything")
+                        Text(model.lastBackup.map { "Last backup: \($0.deletingPathExtension().lastPathComponent)" }
+                             ?? "Lighting, settings and all key layouts, saved to a file. One is made automatically before your first key change.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Back Up Now") { Task { await model.backUpNow() } }
+                }
+                HStack {
+                    Button("Restore…") { pickBackup() }
+                    Button("Show Backups") { NSWorkspace.shared.open(Backup.folder) }
+                    Spacer()
+                }
+            }
+        } header: {
+            Text("Backup")
+        }
+        .alert("Restore this backup?", isPresented: Binding(get: { confirmRestore != nil }, set: { if !$0 { confirmRestore = nil } })) {
+            Button("Restore") {
+                if let url = confirmRestore { Task { await model.restore(from: url) } }
+                confirmRestore = nil
+            }
+            Button("Cancel", role: .cancel) { confirmRestore = nil }
+        } message: {
+            Text("Keys, lighting and settings on the keyboard will be changed back to \(confirmRestore?.deletingPathExtension().lastPathComponent ?? "the backup"). Only keys that differ are rewritten.")
+        }
+        .alert(model.backupError ?? model.restoreResult ?? "",
+               isPresented: Binding(get: { model.backupError != nil || model.restoreResult != nil },
+                                    set: { if !$0 { model.backupError = nil; model.restoreResult = nil } })) {
+            Button("OK", role: .cancel) {}
+        }
+    }
+
+    private func pickBackup() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = Backup.folder
+        panel.allowedContentTypes = [.json]
+        panel.message = "Choose an Air01 backup to restore"
+        if panel.runModal() == .OK, let url = panel.url { confirmRestore = url }
     }
 }
 
@@ -454,7 +521,10 @@ private struct DeviceSection: View {
                 }
             }
             if let a = model.autoOS {
-                LabeledContent("Auto-detect Mac / Windows", value: a ? "On" : "Off")
+                Toggle(isOn: Binding(get: { a }, set: { model.setAutoOS($0) })) {
+                    Text("Auto-detect Mac / Windows")
+                    Text("Switches the keyboard's Mac or Windows mode to match the computer it's plugged into.")
+                }
             }
         }
     }

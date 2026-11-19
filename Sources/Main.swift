@@ -8,6 +8,7 @@ enum Entry {
         if args.contains("--selftest") { exit(SelfTest.run() ? 0 : 1) }
         if args.contains("--probe") { Probe.run(); exit(0) }
         if args.contains("--keymaps") { Probe.keymaps(); exit(0) }
+        if args.contains("--backup") { Probe.backup(); exit(0) }
         if args.contains("--update-now") {
             // Same path as the in-app button, without the UI.
             MainActor.assumeIsolated {
@@ -41,6 +42,11 @@ struct Air01App: App {
                 .task { await updater.check(manual: false) }
         }
         .windowResizability(.contentSize)
+
+        Window("Edit Keys", id: "keys") {
+            KeysView(model: model)
+        }
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Task { await updater.check(manual: true) } }
@@ -65,14 +71,17 @@ enum Snapshotter {
             ("settings-dark", .usb, .darkAqua),
             ("bluetooth", .bluetoothOnly("Air01 BT2"), .aqua),
         ]
-        for (name, link, look) in states {
+        for (name, link, look) in states + [("keys-light", .usb, .aqua), ("keys-dark", .usb, .darkAqua)] {
             let model = KeyboardModel(preview: ())
             model.loadSample(link: link)
             let updater = Updater()
             if name == "settings-dark" { updater.state = .available(version: "1.2.0", notes: "") }
-            let host = NSHostingView(rootView: ContentView(model: model, updater: updater))
+            let isKeys = name.hasPrefix("keys")
+            let host: NSView = isKeys
+                ? NSHostingView(rootView: KeysView(model: model, initialSelection: 3))
+                : NSHostingView(rootView: ContentView(model: model, updater: updater))
             host.appearance = NSAppearance(named: look)
-            let size = NSSize(width: 460, height: link == .usb ? 1240 : 560)
+            let size = isKeys ? NSSize(width: 780, height: 600) : NSSize(width: 460, height: link == .usb ? 1500 : 560)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: look)
             window.contentView = host
@@ -129,7 +138,23 @@ enum Probe {
                 let used = stride(from: 0, to: m.count, by: 4).filter { m[$0..<$0 + 4] != [0, 0, 0, 0] }.count
                 print("profile \(p + 1): \(m.count) bytes, \(used) assigned slots, differs from P1 in \(diff.count) slots \(diff.prefix(10))")
             }
-            print("P1 first 32 bytes: " + maps[0].prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))
+            print("P1 hex: " + maps[0].map { String(format: "%02x", $0) }.joined())
+        } catch {
+            print("error: \(error.localizedDescription)")
+        }
+    }
+
+    /// Read-only: save a full backup file.
+    static func backup() {
+        let watcher = HIDWatcher(scheduleOnMainRunLoop: false)
+        guard let s = watcher.devices().first(where: \.isSettingsInterface) else { print("No USB settings interface."); return }
+        do {
+            let session = try KeyboardSession(s)
+            defer { session.close() }
+            let start = Date()
+            let b = try session.makeBackup { _, _ in }
+            let url = try b.save()
+            print("saved \(url.path) in \(String(format: "%.1f", Date().timeIntervalSince(start))) s; base layers \(b.base.count), Fn layers \(b.fn.count)")
         } catch {
             print("error: \(error.localizedDescription)")
         }
@@ -207,6 +232,19 @@ enum SelfTest {
         check(BoardKind.from(id: 4010).canWrite && !BoardKind.from(id: 3013).canWrite && !BoardKind.from(id: 1).canWrite,
               "writes only on confirmed device 4010")
         check(Identify.format(revision: 0x0309) == "3.09", "revision formatting")
+
+        // Key slot values, using bytes read from a real Air01's Fn layer.
+        check(KeyAction([0x00, 0xE0, 0x52, 0x00]) == .shortcut(mods: [0xE0], key: 0x52), "decode Ctrl+Up (00 e0 52 00)")
+        check(KeyAction([0x00, 0x00, 0xE3, 0x2C]) == .shortcut(mods: [0xE3], key: 0x2C), "decode Cmd+Space (00 00 e3 2c)")
+        check(KeyAction([0x03, 0x00, 0x94, 0x01]) == .media(0x0194), "decode media 0x194 (03 00 94 01)")
+        check(KeyAction.media(0x00E9).bytes == [3, 0, 0xE9, 0], "encode Volume up = 03 00 e9 00")
+        check(KeyAction.key(0x29).bytes == [0, 0, 0x29, 0], "encode Esc = 00 00 29 00")
+        check(KeyAction.shortcut(mods: [0xE3, 0xE1], key: 0x21).bytes == [0, 0xE3, 0x21, 0xE1], "encode Cmd+Shift+4")
+        check(KeyAction([0x0A, 0x01, 0, 0]).name() == "Fn" && KeyAction([0x0A, 0x01, 0, 0]).isBoardFunction, "Fn is a board function")
+        check(Air01Layout.keys.allSatisfy { KeyAction(KeyAction($0.factory).bytes) == KeyAction($0.factory) && KeyAction($0.factory).bytes == $0.factory },
+              "all 83 factory key values round-trip")
+        check(Air01Layout.keys.count == 83 && Air01Layout.key(3)?.label == "Caps" && Air01Layout.key(Air01Layout.fnSlot)?.label == "Fn",
+              "layout: 83 keys, slot 3 Caps, slot 5 Fn")
 
         print(ok ? "All protocol checks passed." : "Some checks FAILED.")
         return ok
