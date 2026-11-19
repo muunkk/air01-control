@@ -11,6 +11,9 @@ BIN="$APP/Contents/MacOS/Air01Control"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
+VERSION="$(tr -d '[:space:]' < VERSION)"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
 
 swiftc -O -swift-version 5 -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
@@ -20,7 +23,7 @@ swiftc -O -swift-version 5 -parse-as-library \
 # Ad-hoc sign so macOS privacy permissions stick to a stable identity.
 codesign --force --sign - --identifier local.air01control "$APP" >/dev/null
 
-echo "Built $APP ($(du -sh "$APP" | cut -f1))"
+echo "Built $APP v$VERSION ($(du -sh "$APP" | cut -f1))"
 
 if [[ "${1:-}" == "install" ]]; then
   mkdir -p ~/Applications

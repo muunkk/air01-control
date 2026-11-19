@@ -29,6 +29,7 @@ final class KeyboardModel: ObservableObject {
     @Published var debounce: Int?
     @Published var sleep: SleepTimes?
     @Published var autoOS: Bool?
+    @Published var keymaps: [Int: [UInt8]] = [:]
 
     var writable: Bool { link == .usb && kind.canWrite }
 
@@ -40,6 +41,11 @@ final class KeyboardModel: ObservableObject {
         led = Lighting(mode: 4, speed: 3, brightness: 4, option: 0, rainbow: false, r: 0, g: 120, b: 255)
         side = Lighting(mode: 2, speed: 2, brightness: 3, option: 0, rainbow: true, r: 255, g: 0, b: 0)
         profile = 0; debounce = 5; autoOS = true
+        var base = [UInt8](repeating: 0, count: Keymap.bytes)
+        for (i, u) in [0x29, 0x35, 0x2B, 0x39, 0xE1, 0xE0].enumerated() { base[i * 4 + 1] = UInt8(u) }
+        var gaming = base
+        gaming[3 * 4 + 1] = 0x29  // Caps Lock -> Esc
+        keymaps = [0: base, 1: gaming, 2: base, 3: base]
         sleep = SleepTimes(sleepBT: 300, sleep24: 300, deepBT: 1800, deep24: 1800)
     }
 
@@ -121,6 +127,7 @@ final class KeyboardModel: ObservableObject {
         session = nil
         deviceID = nil; firmware = nil; usbID = nil
         led = nil; side = nil; profile = nil; debounce = nil; sleep = nil; autoOS = nil
+        keymaps = [:]
         kind = .unknown
         save = .idle
     }
@@ -153,6 +160,7 @@ final class KeyboardModel: ObservableObject {
             debounce = s.debounce
             sleep = s.sleep
             autoOS = s.autoOS
+            keymaps = s.keymaps
             link = .usb
         } catch {
             link = .failed(error.localizedDescription)
@@ -212,6 +220,20 @@ final class KeyboardModel: ObservableObject {
                 await refresh()
             }
         }
+    }
+
+    /// One-line description of how a profile's keys differ from profile 1.
+    func keymapSummary(_ p: Int) -> String? {
+        guard let m = keymaps[p] else { return nil }
+        if p == 0 { return "Base layout" }
+        guard let base = keymaps[0] else { return nil }
+        let diff = Keymap.differingSlots(base, m)
+        if diff.isEmpty { return "Same keys as profile 1" }
+        let shown = diff.prefix(2).map {
+            "\(Keymap.describe(Keymap.slot(base, $0))) → \(Keymap.describe(Keymap.slot(m, $0)))"
+        }
+        let more = diff.count > 2 ? " +\(diff.count - 2) more" : ""
+        return shown.joined(separator: ", ") + more
     }
 
     // MARK: Bindings
