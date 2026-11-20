@@ -2,20 +2,28 @@ import AppKit
 import Foundation
 
 /// Checks GitHub Releases for a newer build and installs it in place.
-///
-/// The repo is private, so anonymous API calls can't see it. Instead this
-/// goes through the GitHub CLI (`gh`), which is already signed in on this
-/// Mac, for both the check and the download.
+/// Uses the public GitHub API, so no login is needed.
 @MainActor
 final class Updater: ObservableObject {
     static let repo = "muunkk/air01-control"
     static let releasesURL = URL(string: "https://github.com/\(repo)/releases")!
+    static let latestAPI = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
+
+    private struct Release: Decodable {
+        struct Asset: Decodable {
+            let name: String
+            let browser_download_url: URL
+        }
+        let tag_name: String
+        let body: String?
+        let assets: [Asset]
+    }
 
     enum State: Equatable {
         case idle
         case checking
         case upToDate
-        case available(version: String, notes: String)
+        case available(version: String, notes: String, download: URL)
         case installing
         case failed(String)
     }
@@ -34,16 +42,21 @@ final class Updater: ObservableObject {
         guard state != .checking, state != .installing else { return }
         state = .checking
         do {
-            let out = try await Self.gh(["api", "repos/\(Self.repo)/releases/latest", "--jq", ".tag_name, .body"])
-            let lines = out.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-            let tag = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+            let release = try await Self.latestRelease()
+            let tag = release.tag_name.trimmingCharacters(in: .whitespaces)
             let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-            let notes = lines.count > 1 ? lines[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            let notes = (release.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !latest.isEmpty else { throw UpdateError("GitHub returned no release.") }
-            state = Self.isNewer(latest, than: currentVersion) ? .available(version: latest, notes: notes) : .upToDate
+            if Self.isNewer(latest, than: currentVersion) {
+                guard let zip = release.assets.first(where: { $0.name.hasPrefix("Air01-Control-") && $0.name.hasSuffix(".zip") }) else {
+                    throw UpdateError("The release has no app download.")
+                }
+                state = .available(version: latest, notes: notes, download: zip.browser_download_url)
+            } else {
+                state = .upToDate
+            }
         } catch {
-            let msg = error.localizedDescription
-            state = .failed(msg.contains("HTTP 404") ? "No release has been published yet." : msg)
+            state = .failed(error.localizedDescription)
         }
         if manual { showResult = true }
     }
@@ -63,25 +76,29 @@ final class Updater: ObservableObject {
     /// Download the release zip, check it, swap it in for the running app
     /// once this process has quit, and relaunch.
     func install() async {
-        guard case .available(let version, _) = state else { return }
+        guard case .available(let version, _, let download) = state else { return }
         state = .installing
         do {
             let fm = FileManager.default
             let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(UUID().uuidString)")
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
 
-            _ = try await Self.gh(["release", "download", "v\(version)", "-R", Self.repo,
-                                   "-p", "Air01-Control-*.zip", "-D", work.path])
-            guard let zip = try fm.contentsOfDirectory(atPath: work.path).first(where: { $0.hasSuffix(".zip") }) else {
-                throw UpdateError("The release has no app download.")
+            let (tmp, response) = try await URLSession.shared.download(from: download)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw UpdateError("The download failed.")
             }
+            let zip = work.appendingPathComponent("update.zip")
+            try fm.moveItem(at: tmp, to: zip)
             let unpacked = work.appendingPathComponent("unpacked")
-            _ = try await Self.run("/usr/bin/ditto", ["-x", "-k", work.appendingPathComponent(zip).path, unpacked.path])
+            _ = try await Self.run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path])
 
             let newApp = unpacked.appendingPathComponent("Air01 Control.app")
             let plist = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist"))
             guard plist?["CFBundleShortVersionString"] as? String == version else {
                 throw UpdateError("The downloaded app isn't version \(version).")
+            }
+            guard Self.runsHere(newApp) else {
+                throw UpdateError("Version \(version) doesn't run on this Mac's processor. Download it from the releases page instead.")
             }
 
             let dest = Bundle.main.bundlePath
@@ -104,17 +121,27 @@ final class Updater: ObservableObject {
         }
     }
 
-    // MARK: Processes
+    // MARK: Network and processes
 
-    static func ghPath() -> String? {
-        ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    private static func latestRelease() async throws -> Release {
+        var req = URLRequest(url: latestAPI)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 { throw UpdateError("No release has been published yet.") }
+        guard status == 200 else { throw UpdateError("GitHub returned HTTP \(status).") }
+        return try JSONDecoder().decode(Release.self, from: data)
     }
 
-    static func gh(_ args: [String]) async throws -> String {
-        guard let path = ghPath() else {
-            throw UpdateError("Updates need the GitHub CLI. Install it with `brew install gh`, then run `gh auth login`.")
-        }
-        return try await run(path, args)
+    /// True if the app's executable has a slice for this Mac's CPU.
+    static func runsHere(_ app: URL) -> Bool {
+        #if arch(arm64)
+        let native = NSBundleExecutableArchitectureARM64
+        #else
+        let native = NSBundleExecutableArchitectureX86_64
+        #endif
+        let archs = Bundle(url: app)?.executableArchitectures?.map(\.intValue) ?? []
+        return archs.contains(native)
     }
 
     static func run(_ exe: String, _ args: [String]) async throws -> String {

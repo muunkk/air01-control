@@ -7,7 +7,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Air01 Control</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.air01control</string>
+	<string>io.github.muunkk.air01control</string>
 	<key>CFBundleExecutable</key>
 	<string>Air01Control</string>
 	<key>CFBundlePackageType</key>

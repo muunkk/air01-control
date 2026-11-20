@@ -20,7 +20,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then echo "$TAG already exists; bump 
 ./build.sh
 "build/Air01 Control.app/Contents/MacOS/Air01Control" --selftest >/dev/null
 rm -f "$ZIP"
-ditto -c -k --sequesterRsrc --keepParent "build/Air01 Control.app" "$ZIP"
+ditto -c -k --norsrc --keepParent "build/Air01 Control.app" "$ZIP"
 
 gh release create "$TAG" "$ZIP" --target main --title "Air01 Control $VERSION" --notes "$NOTES"
 echo "Released $TAG"

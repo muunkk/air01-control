@@ -37,7 +37,7 @@ struct ContentView: View {
 
     private var alertTitle: String {
         switch updater.state {
-        case .available(let v, _): return "Air01 Control \(v) is available"
+        case .available(let v, _, _): return "Air01 Control \(v) is available"
         case .failed: return "Couldn't check for updates"
         default: return "You're up to date"
         }
@@ -45,7 +45,7 @@ struct ContentView: View {
 
     private var alertMessage: String {
         switch updater.state {
-        case .available(_, let notes): return notes.isEmpty ? "You have \(updater.currentVersion)." : notes
+        case .available(_, let notes, _): return notes.isEmpty ? "You have \(updater.currentVersion)." : notes
         case .failed(let msg): return msg
         default: return "Air01 Control \(updater.currentVersion) is the latest version."
         }
@@ -67,7 +67,7 @@ private struct UpdateFooter: View {
             case .installing:
                 ProgressView().controlSize(.small)
                 Text("Installing update…").font(.caption).foregroundStyle(.secondary)
-            case .available(let v, _):
+            case .available(let v, _, _):
                 Button("Update to \(v)") { Task { await updater.install() } }
                     .buttonStyle(.borderedProminent).controlSize(.small)
             default:
