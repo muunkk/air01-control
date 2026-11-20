@@ -8,16 +8,9 @@
 
 Change lighting, profiles and power settings from your Mac. No drivers, no account, nothing running in the background.
 
-[![Latest release](https://img.shields.io/github/v/release/muunkk/air01-control?label=release&color=0a84ff)](https://github.com/muunkk/air01-control/releases/latest)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
-[![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)](#requirements)
-[![License: GPL-3.0](https://img.shields.io/github/license/muunkk/air01-control?color=2ea44f)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/muunkk/air01-control?label=release&color=0a84ff)](https://github.com/muunkk/air01-control/releases/latest) [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements) [![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-555555)](#requirements) [![License: GPL-3.0](https://img.shields.io/github/license/muunkk/air01-control?color=2ea44f)](LICENSE)
 
-[**Download**](https://github.com/muunkk/air01-control/releases/latest) ·
-[Features](#features) ·
-[Install](#install) ·
-[FAQ](#faq) ·
-[Build from source](#build-from-source)
+[**Download**](https://github.com/muunkk/air01-control/releases/latest) · [Features](#features) · [Install](#install) · [FAQ](#faq) · [Build from source](#build-from-source)
 
 <br>
 
