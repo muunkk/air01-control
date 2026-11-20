@@ -80,8 +80,10 @@ your own risk. See sections 15 and 16 of the license.
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). Copyright (C) 2026 Mel Boonchan. This applies to every version
-in this repository's history, including earlier commits, branches, pull requests and releases.
+Copyright (C) 2026 Mel Boonchan. Licensed under [GPL-3.0-or-later](LICENSE). The license
+applies to every version in this repository's history, including earlier commits, branches,
+pull requests and releases. Material derived from other projects keeps its original copyright
+and notices.
 
 This program is free software: you can redistribute it and/or modify it under the terms of
 the GNU General Public License as published by the Free Software Foundation, either version 3

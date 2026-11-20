@@ -79,13 +79,21 @@ final class Updater: ObservableObject {
         guard case .available(let version, _, let download) = state else { return }
         state = .installing
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(UUID().uuidString)")
+        let tag = UUID().uuidString
+        let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(tag)")
+        let dest = Bundle.main.bundlePath
+        let parent = (dest as NSString).deletingLastPathComponent
+        // Staged next to the installed app so the final swap is a same-volume rename.
+        let staged = URL(fileURLWithPath: parent).appendingPathComponent(".Air01 Control-update-\(tag).app")
         var handedOff = false
-        defer { if !handedOff { try? fm.removeItem(at: work) } }
+        defer {
+            if !handedOff {
+                try? fm.removeItem(at: work)
+                try? fm.removeItem(at: staged)
+            }
+        }
         do {
-            let dest = Bundle.main.bundlePath
             guard dest.hasSuffix(".app") else { throw UpdateError("This copy isn't running from an app bundle.") }
-            let parent = (dest as NSString).deletingLastPathComponent
             guard !dest.contains("/AppTranslocation/"), fm.isWritableFile(atPath: parent) else {
                 throw UpdateError("Move Air01 Control to your Applications folder, reopen it, then update.")
             }
@@ -108,21 +116,23 @@ final class Updater: ObservableObject {
                 throw UpdateError("Version \(version) doesn't support this Mac's processor.")
             }
 
+            try fm.moveItem(at: newApp, to: staged)
+
             let pid = ProcessInfo.processInfo.processIdentifier
-            // Runs after we quit: wait for exit, swap bundles (putting the old
-            // one back if the swap fails), clean up, relaunch.
+            let old = "\(parent)/.Air01 Control-old-\(tag).app"
+            // Runs after we quit: wait for exit, swap bundles with same-volume
+            // renames (putting the old one back if the swap fails), clean up, relaunch.
             let script = """
             while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
-            rm -rf "$1.old"
-            if mv "$1" "$1.old"; then
-              if mv "$2" "$1"; then rm -rf "$1.old"; else mv "$1.old" "$1"; fi
+            if mv "$1" "$4"; then
+              if mv "$2" "$1"; then rm -rf "$4"; else mv "$4" "$1"; fi
             fi
-            rm -rf "$3"
+            rm -rf "$2" "$3"
             open "$1"
             """
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
-            p.arguments = ["-c", script, "sh", dest, newApp.path, work.path]
+            p.arguments = ["-c", script, "sh", dest, staged.path, work.path, old]
             try p.run()
             handedOff = true
             if NSApp != nil { NSApp.terminate(nil) } else { exit(0) }

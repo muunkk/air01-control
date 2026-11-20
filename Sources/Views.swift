@@ -22,7 +22,13 @@ struct ContentView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .alert(alertTitle, isPresented: $updater.showResult) {
             if case .available = updater.state {
-                Button("Install and Relaunch") { Task { await updater.install() } }
+                Button("Install and Relaunch") {
+                    Task {
+                        // Let this alert finish closing so a failure alert can show.
+                        try? await Task.sleep(for: .milliseconds(300))
+                        await updater.install()
+                    }
+                }
                 Button("Later", role: .cancel) {}
             } else if case .failed = updater.state {
                 Button("Open Releases Page") { NSWorkspace.shared.open(Updater.releasesURL) }
