@@ -31,6 +31,8 @@ final class Updater: ObservableObject {
     @Published var state: State = .idle
     /// Set after a manual check, to show the result in an alert.
     @Published var showResult = false
+    /// True when the last failure came from installing, not checking.
+    @Published var installFailed = false
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -41,6 +43,7 @@ final class Updater: ObservableObject {
     func check(manual: Bool) async {
         guard state != .checking, state != .installing else { return }
         state = .checking
+        installFailed = false
         do {
             let release = try await Self.latestRelease()
             let tag = release.tag_name.trimmingCharacters(in: .whitespaces)
@@ -137,6 +140,7 @@ final class Updater: ObservableObject {
             handedOff = true
             if NSApp != nil { NSApp.terminate(nil) } else { exit(0) }
         } catch {
+            installFailed = true
             state = .failed(error.localizedDescription)
             showResult = true
         }

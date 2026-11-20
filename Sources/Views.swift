@@ -44,7 +44,7 @@ struct ContentView: View {
     private var alertTitle: String {
         switch updater.state {
         case .available(let v, _, _): return "Air01 Control \(v) is available"
-        case .failed: return "Update failed"
+        case .failed: return updater.installFailed ? "Update failed" : "Couldn't check for updates"
         default: return "You're up to date"
         }
     }
