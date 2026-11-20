@@ -12,6 +12,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
@@ -26,7 +27,8 @@ done
 lipo -create build/Air01Control-arm64 build/Air01Control-x86_64 -output "$BIN"
 rm -f build/Air01Control-arm64 build/Air01Control-x86_64
 
-# Ad-hoc sign so macOS privacy permissions stick to a stable identity.
+# Ad-hoc sign (no Apple Developer ID). macOS ties Input Monitoring to this
+# build's code hash, so a new build may need the permission granted again.
 codesign --force --sign - --identifier io.github.muunkk.air01control "$APP" >/dev/null
 
 echo "Built $APP v$VERSION ($(du -sh "$APP" | cut -f1))"

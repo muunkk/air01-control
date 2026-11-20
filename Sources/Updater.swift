@@ -78,17 +78,24 @@ final class Updater: ObservableObject {
     func install() async {
         guard case .available(let version, _, let download) = state else { return }
         state = .installing
+        let fm = FileManager.default
+        let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(UUID().uuidString)")
+        var handedOff = false
+        defer { if !handedOff { try? fm.removeItem(at: work) } }
         do {
-            let fm = FileManager.default
-            let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(UUID().uuidString)")
-            try fm.createDirectory(at: work, withIntermediateDirectories: true)
-
-            let (tmp, response) = try await URLSession.shared.download(from: download)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                throw UpdateError("The download failed.")
+            let dest = Bundle.main.bundlePath
+            guard dest.hasSuffix(".app") else { throw UpdateError("This copy isn't running from an app bundle.") }
+            let parent = (dest as NSString).deletingLastPathComponent
+            guard !dest.contains("/AppTranslocation/"), fm.isWritableFile(atPath: parent) else {
+                throw UpdateError("Move Air01 Control to your Applications folder, reopen it, then update.")
             }
+
+            try fm.createDirectory(at: work, withIntermediateDirectories: true)
+            let (tmp, response) = try await URLSession.shared.download(from: download)
             let zip = work.appendingPathComponent("update.zip")
             try fm.moveItem(at: tmp, to: zip)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else { throw UpdateError("The download failed (HTTP \(status)).") }
             let unpacked = work.appendingPathComponent("unpacked")
             _ = try await Self.run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path])
 
@@ -98,22 +105,26 @@ final class Updater: ObservableObject {
                 throw UpdateError("The downloaded app isn't version \(version).")
             }
             guard Self.runsHere(newApp) else {
-                throw UpdateError("Version \(version) doesn't run on this Mac's processor. Download it from the releases page instead.")
+                throw UpdateError("Version \(version) doesn't support this Mac's processor.")
             }
 
-            let dest = Bundle.main.bundlePath
-            guard dest.hasSuffix(".app") else { throw UpdateError("This copy isn't running from an app bundle.") }
             let pid = ProcessInfo.processInfo.processIdentifier
-            // Runs after we quit: wait for exit, swap bundles, relaunch.
+            // Runs after we quit: wait for exit, swap bundles (putting the old
+            // one back if the swap fails), clean up, relaunch.
             let script = """
             while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
-            rm -rf "$1.old" && mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old" "$3"
+            rm -rf "$1.old"
+            if mv "$1" "$1.old"; then
+              if mv "$2" "$1"; then rm -rf "$1.old"; else mv "$1.old" "$1"; fi
+            fi
+            rm -rf "$3"
             open "$1"
             """
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
             p.arguments = ["-c", script, "sh", dest, newApp.path, work.path]
             try p.run()
+            handedOff = true
             if NSApp != nil { NSApp.terminate(nil) } else { exit(0) }
         } catch {
             state = .failed(error.localizedDescription)

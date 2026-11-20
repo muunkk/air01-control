@@ -13,7 +13,10 @@ Download `Air01-Control-<version>.zip` from the
 Silicon and Intel.
 
 The app isn't notarized, so the first launch is blocked. Open it once, then go to
-**System Settings → Privacy & Security** and click **Open Anyway**.
+**System Settings → Privacy & Security** and click **Open Anyway**. Then allow it under
+**Privacy & Security → Input Monitoring**, which it needs to talk to the keyboard. After an
+update macOS may ask again; if the app can't reach the keyboard, remove it from that list and
+allow it again.
 
 After that, the app updates itself: it checks GitHub Releases on launch, and the footer button
 or **Air01 Control → Check for Updates…** installs a new version and relaunches.
@@ -77,7 +80,8 @@ your own risk. See sections 15 and 16 of the license.
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). Copyright (C) 2026 Mel Boonchan.
+[GPL-3.0-or-later](LICENSE). Copyright (C) 2026 Mel Boonchan. This applies to every version
+in this repository's history, including earlier commits, branches, pull requests and releases.
 
 This program is free software: you can redistribute it and/or modify it under the terms of
 the GNU General Public License as published by the Free Software Foundation, either version 3
