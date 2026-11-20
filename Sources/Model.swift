@@ -30,6 +30,15 @@ final class KeyboardModel: ObservableObject {
     @Published var sleep: SleepTimes?
     @Published var autoOS: Bool?
     @Published var keymaps: [Int: [UInt8]] = [:]
+    @Published var fnMaps: [Int: [UInt8]] = [:]
+    @Published var osMode: Int?
+    @Published var keyBusy = false
+    @Published var keyStatus: String?
+    @Published var backupProgress: (String, Double)?
+    @Published var backupError: String?
+    @Published var restoreResult: String?
+    @Published var lastBackup: URL?
+    private(set) var backedUpThisSession = false
 
     var writable: Bool { link == .usb && kind.canWrite }
 
@@ -42,10 +51,15 @@ final class KeyboardModel: ObservableObject {
         side = Lighting(mode: 2, speed: 2, brightness: 3, option: 0, rainbow: true, r: 255, g: 0, b: 0)
         profile = 0; debounce = 5; autoOS = true
         var base = [UInt8](repeating: 0, count: Keymap.bytes)
-        for (i, u) in [0x29, 0x35, 0x2B, 0x39, 0xE1, 0xE0].enumerated() { base[i * 4 + 1] = UInt8(u) }
+        for k in Air01Layout.keys { base.replaceSubrange(k.slot * 4..<k.slot * 4 + 4, with: k.factory) }
         var gaming = base
-        gaming[3 * 4 + 1] = 0x29  // Caps Lock -> Esc
+        gaming.replaceSubrange(3 * 4..<3 * 4 + 4, with: KeyAction.key(0x29).bytes)  // Caps Lock -> Esc
         keymaps = [0: base, 1: gaming, 2: base, 3: base]
+        var fnMac = [UInt8](repeating: 0, count: Keymap.bytes)
+        fnMac.replaceSubrange(6 * 4..<6 * 4 + 4, with: KeyAction.media(0x70).bytes)
+        fnMac.replaceSubrange(12 * 4..<12 * 4 + 4, with: KeyAction.media(0x6F).bytes)
+        fnMaps = [0: fnMac, 1: fnMac]
+        osMode = 1
         sleep = SleepTimes(sleepBT: 300, sleep24: 300, deepBT: 1800, deep24: 1800)
     }
 
@@ -127,7 +141,7 @@ final class KeyboardModel: ObservableObject {
         session = nil
         deviceID = nil; firmware = nil; usbID = nil
         led = nil; side = nil; profile = nil; debounce = nil; sleep = nil; autoOS = nil
-        keymaps = [:]
+        keymaps = [:]; fnMaps = [:]; osMode = nil; keyStatus = nil
         kind = .unknown
         save = .idle
     }
@@ -161,6 +175,8 @@ final class KeyboardModel: ObservableObject {
             sleep = s.sleep
             autoOS = s.autoOS
             keymaps = s.keymaps
+            fnMaps = s.fnMaps
+            osMode = s.osMode
             link = .usb
         } catch {
             link = .failed(error.localizedDescription)
@@ -222,18 +238,112 @@ final class KeyboardModel: ObservableObject {
         }
     }
 
-    /// One-line description of how a profile's keys differ from profile 1.
+    /// One-line description of how a profile's keys differ from the factory layout.
     func keymapSummary(_ p: Int) -> String? {
-        guard let m = keymaps[p] else { return nil }
-        if p == 0 { return "Base layout" }
-        guard let base = keymaps[0] else { return nil }
-        let diff = Keymap.differingSlots(base, m)
-        if diff.isEmpty { return "Same keys as profile 1" }
-        let shown = diff.prefix(2).map {
-            "\(Keymap.describe(Keymap.slot(base, $0))) → \(Keymap.describe(Keymap.slot(m, $0)))"
-        }
-        let more = diff.count > 2 ? " +\(diff.count - 2) more" : ""
+        guard let m = keymaps[p], m.count == Keymap.bytes else { return nil }
+        let changed = Air01Layout.keys.filter { Array(Keymap.slot(m, $0.slot)) != $0.factory }
+        if changed.isEmpty { return "Factory key layout" }
+        let shown = changed.prefix(2).map { "\($0.label) → \(KeyAction(Array(Keymap.slot(m, $0.slot))).name())" }
+        let more = changed.count > 2 ? " +\(changed.count - 2) more" : ""
         return shown.joined(separator: ", ") + more
+    }
+
+    // MARK: Keys
+
+    /// The layer map shown in the key editor (active profile).
+    func layerMap(_ layer: KeyLayer) -> [UInt8]? {
+        switch layer {
+        case .base: return profile.flatMap { keymaps[$0] }
+        case .fn(let os): return fnMaps[os]
+        }
+    }
+
+    func value(_ layer: KeyLayer, slot: Int) -> [UInt8]? {
+        guard let m = layerMap(layer), m.count == Keymap.bytes else { return nil }
+        return Array(Keymap.slot(m, slot))
+    }
+
+    /// Write one key on the active profile. The first change of a session
+    /// saves a full backup before anything is written.
+    func assign(_ action: KeyAction, to slot: Int, on layer: KeyLayer) async {
+        guard writable, let session, let p = profile, !keyBusy else { return }
+        keyBusy = true
+        defer { keyBusy = false }
+        if !backedUpThisSession {
+            keyStatus = "Saving a backup before your first change…"
+            guard await backUpNow() != nil else {
+                keyStatus = "Couldn't save a backup, so nothing was changed."
+                return
+            }
+        }
+        let name = Air01Layout.key(slot)?.label ?? "key"
+        keyStatus = "Saving \(name)…"
+        let bytes = action.bytes
+        do {
+            try await session.run { try $0.writeSlot(layer, profile: p, slot: slot, value: bytes) }
+            switch layer {
+            case .base: keymaps[p]?.replaceSubrange(slot * 4..<slot * 4 + 4, with: bytes)
+            case .fn(let os): fnMaps[os]?.replaceSubrange(slot * 4..<slot * 4 + 4, with: bytes)
+            }
+            keyStatus = "Saved: \(name) now does \(action.name(fnLayer: layer != .base)). Try it out."
+        } catch {
+            keyStatus = error.localizedDescription
+        }
+    }
+
+    // MARK: Backup
+
+    @discardableResult
+    func backUpNow() async -> URL? {
+        guard writable, let session else { return nil }
+        backupProgress = ("Starting…", 0)
+        defer { backupProgress = nil }
+        do {
+            let b = try await session.run { [weak self] s in
+                try s.makeBackup { msg, f in Task { @MainActor in self?.backupProgress = (msg, f) } }
+            }
+            let url = try b.save()
+            lastBackup = url
+            backedUpThisSession = true
+            return url
+        } catch {
+            backupError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func restore(from url: URL) async {
+        guard writable, let session else { return }
+        backupProgress = ("Starting…", 0)
+        do {
+            let b = try Backup.load(url)
+            let changed = try await session.run { [weak self] s in
+                try s.restore(b) { msg, f in Task { @MainActor in self?.backupProgress = (msg, f) } }
+            }
+            backupProgress = nil
+            restoreResult = changed == 0 ? "Restored. Keys already matched the backup; lighting and settings were reapplied."
+                : "Restored \(changed) key\(changed == 1 ? "" : "s") plus lighting and settings."
+            await refresh()
+        } catch {
+            backupProgress = nil
+            backupError = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    func setAutoOS(_ on: Bool) {
+        guard writable, let session else { return }
+        autoOS = on
+        save = .saving
+        Task {
+            do {
+                let got = try await session.run { try $0.setAutoOS(on) }
+                autoOS = got
+                save = got == on ? .saved : .failed("The keyboard didn't take the change.")
+            } catch {
+                save = .failed(error.localizedDescription)
+            }
+        }
     }
 
     // MARK: Bindings
