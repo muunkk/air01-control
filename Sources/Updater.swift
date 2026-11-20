@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 /// Checks GitHub Releases for a newer build and installs it in place.
 /// Uses the public GitHub API, so no login is needed.
@@ -118,6 +119,7 @@ final class Updater: ObservableObject {
             guard Self.runsHere(newApp) else {
                 throw UpdateError("Version \(version) doesn't support this Mac's processor.")
             }
+            try Self.checkSignature(of: newApp)
 
             try fm.moveItem(at: newApp, to: staged)
 
@@ -156,6 +158,45 @@ final class Updater: ObservableObject {
         if status == 404 { throw UpdateError("No release has been published yet.") }
         guard status == 200 else { throw UpdateError("GitHub returned HTTP \(status).") }
         return try JSONDecoder().decode(Release.self, from: data)
+    }
+
+    /// The download must pass a strict signature check. If this copy is signed
+    /// with a Developer ID, the download must chain to Apple's Developer ID CA
+    /// with the same Team ID, so only the same developer can ship an update.
+    static func checkSignature(of app: URL) throws {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code else {
+            throw UpdateError("The downloaded app isn't signed.")
+        }
+        var requirement: SecRequirement?
+        if let team = ownTeamID() {
+            let text = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
+                + " and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+                + " and certificate leaf[subject.OU] = \"\(team)\""
+            guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess else {
+                throw UpdateError("Couldn't build the signature check.")
+            }
+        }
+        let flags = SecCSFlags(rawValue: UInt32(kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode))
+        let status = SecStaticCodeCheckValidity(code, flags, requirement)
+        if status == errSecCSReqFailed {
+            throw UpdateError("The downloaded app isn't signed by the same developer. Not installing it.")
+        }
+        guard status == errSecSuccess else {
+            throw UpdateError("The downloaded app's signature is invalid (\(status)). Not installing it.")
+        }
+    }
+
+    /// This copy's Team ID, or nil for an ad-hoc (local) build.
+    static func ownTeamID() -> String? {
+        var me: SecCode?
+        guard SecCodeCopySelf([], &me) == errSecSuccess, let me else { return nil }
+        var staticMe: SecStaticCode?
+        guard SecCodeCopyStaticCode(me, [], &staticMe) == errSecSuccess, let staticMe else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(staticMe, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any] else { return nil }
+        return dict[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     /// True if the app's executable has a slice for this Mac's CPU.

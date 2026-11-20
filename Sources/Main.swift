@@ -22,6 +22,14 @@ enum Entry {
             }
             dispatchMain()
         }
+        if let i = args.firstIndex(of: "--check-signature"), args.count > i + 1 {
+            // Runs the updater's signature check on an app bundle.
+            let team = MainActor.assumeIsolated { Updater.ownTeamID() } ?? "none (ad-hoc)"
+            do {
+                try MainActor.assumeIsolated { try Updater.checkSignature(of: URL(fileURLWithPath: args[i + 1])) }
+                print("team \(team): accepted"); exit(0)
+            } catch { print("team \(team): rejected: \(error.localizedDescription)"); exit(1) }
+        }
         if let i = args.firstIndex(of: "--snapshot"), args.count > i + 1 {
             MainActor.assumeIsolated { Snapshotter.render(to: args[i + 1]) }
             exit(0)

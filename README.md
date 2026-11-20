@@ -12,11 +12,9 @@ Download `Air01-Control-<version>.zip` from the
 **Air01 Control.app** to `~/Applications`. Needs macOS 14 or later; runs natively on Apple
 Silicon and Intel.
 
-The app isn't notarized, so the first launch is blocked. Open it once, then go to
-**System Settings → Privacy & Security** and click **Open Anyway**. Then allow it under
-**Privacy & Security → Input Monitoring**, which it needs to talk to the keyboard. After an
-update macOS may ask again; if the app can't reach the keyboard, remove it from that list and
-allow it again.
+Releases are signed with a Developer ID and notarized by Apple, so the app opens normally.
+If macOS asks, allow it under **System Settings → Privacy & Security → Input Monitoring**, which
+it needs to talk to the keyboard. Updates keep the same signature, so the permission carries over.
 
 After that, the app updates itself: it checks GitHub Releases on launch, and the footer button
 or **Air01 Control → Check for Updates…** installs a new version and relaunches.
@@ -45,10 +43,24 @@ or **Air01 Control → Check for Updates…** installs a new version and relaunc
 ```sh
 ./build.sh           # -> build/Air01 Control.app, universal (version from ./VERSION)
 ./build.sh install   # also copies it to ~/Applications
-./release.sh "notes" # on an up-to-date main: zip the app, publish GitHub release v<VERSION>
+./release.sh "notes" # on an up-to-date main: notarize, zip, publish GitHub release v<VERSION>
 ```
 
 To ship an update: bump `VERSION` in a PR, merge it, then run `release.sh` from `main`.
+
+`build.sh` signs with the first **Developer ID Application** certificate in your keychain
+(override with `SIGN_IDENTITY`), using the hardened runtime. Without one it signs ad-hoc, which
+runs on your own Mac but can't be released. `release.sh` notarizes and staples the app; it reads
+App Store Connect API credentials from a notarytool keychain profile (default `air01-notary`,
+override with `NOTARY_PROFILE`), set up once with:
+
+```sh
+xcrun notarytool store-credentials air01-notary \
+  --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-uuid>
+```
+
+The updater only installs a download that passes a strict code-signature check and, when the
+running app has a Developer ID, carries the same Team ID.
 
 The app icon is drawn in code: `tools/make_icon.sh` regenerates `Resources/AppIcon.icns`
 from `tools/make_icon.swift`.
