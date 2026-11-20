@@ -41,7 +41,8 @@ ctx.drawLinearGradient(linear([rgb(0x353945), rgb(0x1E2027), rgb(0x121318)], [0,
                        start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
 
 // 2. RGB underglow: blurred rainbow bar under the keyboard.
-let body = CGRect(x: 178, y: 404, width: 668, height: 300)
+// Centred on the tile: tile.midY (512) - height / 2.
+let body = CGRect(x: 178, y: 362, width: 668, height: 300)
 ctx.saveGState()
 ctx.setShadow(offset: .zero, blur: 120, color: rgb(0x7A5CFF, 1))
 ctx.addPath(rounded(body.insetBy(dx: 24, dy: 24), 40))
@@ -117,7 +118,8 @@ func keyRow(y: CGFloat, widths: [CGFloat]) {
         x += w * scale + gap * scale
     }
 }
-let top = plate.minY + 24
+// Centre the four rows vertically on the plate.
+let top = plate.minY + (plate.height - (4 * keyH + 3 * gap)) / 2
 keyRow(y: top, widths: Array(repeating: 46, count: 12))
 keyRow(y: top + (keyH + gap), widths: [70] + Array(repeating: 46, count: 10) + [70])
 keyRow(y: top + 2 * (keyH + gap), widths: [86] + Array(repeating: 46, count: 9) + [102])
