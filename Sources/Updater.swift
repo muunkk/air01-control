@@ -2,20 +2,28 @@ import AppKit
 import Foundation
 
 /// Checks GitHub Releases for a newer build and installs it in place.
-///
-/// The repo is private, so anonymous API calls can't see it. Instead this
-/// goes through the GitHub CLI (`gh`), which is already signed in on this
-/// Mac, for both the check and the download.
+/// Uses the public GitHub API, so no login is needed.
 @MainActor
 final class Updater: ObservableObject {
     static let repo = "muunkk/air01-control"
     static let releasesURL = URL(string: "https://github.com/\(repo)/releases")!
+    static let latestAPI = URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!
+
+    private struct Release: Decodable {
+        struct Asset: Decodable {
+            let name: String
+            let browser_download_url: URL
+        }
+        let tag_name: String
+        let body: String?
+        let assets: [Asset]
+    }
 
     enum State: Equatable {
         case idle
         case checking
         case upToDate
-        case available(version: String, notes: String)
+        case available(version: String, notes: String, download: URL)
         case installing
         case failed(String)
     }
@@ -23,6 +31,8 @@ final class Updater: ObservableObject {
     @Published var state: State = .idle
     /// Set after a manual check, to show the result in an alert.
     @Published var showResult = false
+    /// True when the last failure came from installing, not checking.
+    @Published var installFailed = false
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -33,17 +43,23 @@ final class Updater: ObservableObject {
     func check(manual: Bool) async {
         guard state != .checking, state != .installing else { return }
         state = .checking
+        installFailed = false
         do {
-            let out = try await Self.gh(["api", "repos/\(Self.repo)/releases/latest", "--jq", ".tag_name, .body"])
-            let lines = out.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-            let tag = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+            let release = try await Self.latestRelease()
+            let tag = release.tag_name.trimmingCharacters(in: .whitespaces)
             let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-            let notes = lines.count > 1 ? lines[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            let notes = (release.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !latest.isEmpty else { throw UpdateError("GitHub returned no release.") }
-            state = Self.isNewer(latest, than: currentVersion) ? .available(version: latest, notes: notes) : .upToDate
+            if Self.isNewer(latest, than: currentVersion) {
+                guard let zip = release.assets.first(where: { $0.name.hasPrefix("Air01-Control-") && $0.name.hasSuffix(".zip") }) else {
+                    throw UpdateError("The release has no app download.")
+                }
+                state = .available(version: latest, notes: notes, download: zip.browser_download_url)
+            } else {
+                state = .upToDate
+            }
         } catch {
-            let msg = error.localizedDescription
-            state = .failed(msg.contains("HTTP 404") ? "No release has been published yet." : msg)
+            state = .failed(error.localizedDescription)
         }
         if manual { showResult = true }
     }
@@ -63,58 +79,94 @@ final class Updater: ObservableObject {
     /// Download the release zip, check it, swap it in for the running app
     /// once this process has quit, and relaunch.
     func install() async {
-        guard case .available(let version, _) = state else { return }
+        guard case .available(let version, _, let download) = state else { return }
         state = .installing
-        do {
-            let fm = FileManager.default
-            let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(UUID().uuidString)")
-            try fm.createDirectory(at: work, withIntermediateDirectories: true)
-
-            _ = try await Self.gh(["release", "download", "v\(version)", "-R", Self.repo,
-                                   "-p", "Air01-Control-*.zip", "-D", work.path])
-            guard let zip = try fm.contentsOfDirectory(atPath: work.path).first(where: { $0.hasSuffix(".zip") }) else {
-                throw UpdateError("The release has no app download.")
+        let fm = FileManager.default
+        let tag = UUID().uuidString
+        let work = fm.temporaryDirectory.appendingPathComponent("air01-update-\(tag)")
+        let dest = Bundle.main.bundlePath
+        let parent = (dest as NSString).deletingLastPathComponent
+        // Staged next to the installed app so the final swap is a same-volume rename.
+        let staged = URL(fileURLWithPath: parent).appendingPathComponent(".Air01 Control-update-\(tag).app")
+        var handedOff = false
+        defer {
+            if !handedOff {
+                try? fm.removeItem(at: work)
+                try? fm.removeItem(at: staged)
             }
+        }
+        do {
+            guard dest.hasSuffix(".app") else { throw UpdateError("This copy isn't running from an app bundle.") }
+            guard !dest.contains("/AppTranslocation/"), fm.isWritableFile(atPath: parent) else {
+                throw UpdateError("Move Air01 Control to your Applications folder, reopen it, then update.")
+            }
+
+            try fm.createDirectory(at: work, withIntermediateDirectories: true)
+            let (tmp, response) = try await URLSession.shared.download(from: download)
+            let zip = work.appendingPathComponent("update.zip")
+            try fm.moveItem(at: tmp, to: zip)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else { throw UpdateError("The download failed (HTTP \(status)).") }
             let unpacked = work.appendingPathComponent("unpacked")
-            _ = try await Self.run("/usr/bin/ditto", ["-x", "-k", work.appendingPathComponent(zip).path, unpacked.path])
+            _ = try await Self.run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path])
 
             let newApp = unpacked.appendingPathComponent("Air01 Control.app")
             let plist = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist"))
             guard plist?["CFBundleShortVersionString"] as? String == version else {
                 throw UpdateError("The downloaded app isn't version \(version).")
             }
+            guard Self.runsHere(newApp) else {
+                throw UpdateError("Version \(version) doesn't support this Mac's processor.")
+            }
 
-            let dest = Bundle.main.bundlePath
-            guard dest.hasSuffix(".app") else { throw UpdateError("This copy isn't running from an app bundle.") }
+            try fm.moveItem(at: newApp, to: staged)
+
             let pid = ProcessInfo.processInfo.processIdentifier
-            // Runs after we quit: wait for exit, swap bundles, relaunch.
+            let old = "\(parent)/.Air01 Control-old-\(tag).app"
+            // Runs after we quit: wait for exit, swap bundles with same-volume
+            // renames (putting the old one back if the swap fails), clean up, relaunch.
             let script = """
             while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
-            rm -rf "$1.old" && mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old" "$3"
+            if mv "$1" "$4"; then
+              if mv "$2" "$1"; then rm -rf "$4"; else mv "$4" "$1"; fi
+            fi
+            rm -rf "$2" "$3"
             open "$1"
             """
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
-            p.arguments = ["-c", script, "sh", dest, newApp.path, work.path]
+            p.arguments = ["-c", script, "sh", dest, staged.path, work.path, old]
             try p.run()
+            handedOff = true
             if NSApp != nil { NSApp.terminate(nil) } else { exit(0) }
         } catch {
+            installFailed = true
             state = .failed(error.localizedDescription)
             showResult = true
         }
     }
 
-    // MARK: Processes
+    // MARK: Network and processes
 
-    static func ghPath() -> String? {
-        ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    private static func latestRelease() async throws -> Release {
+        var req = URLRequest(url: latestAPI)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 { throw UpdateError("No release has been published yet.") }
+        guard status == 200 else { throw UpdateError("GitHub returned HTTP \(status).") }
+        return try JSONDecoder().decode(Release.self, from: data)
     }
 
-    static func gh(_ args: [String]) async throws -> String {
-        guard let path = ghPath() else {
-            throw UpdateError("Updates need the GitHub CLI. Install it with `brew install gh`, then run `gh auth login`.")
-        }
-        return try await run(path, args)
+    /// True if the app's executable has a slice for this Mac's CPU.
+    static func runsHere(_ app: URL) -> Bool {
+        #if arch(arm64)
+        let native = NSBundleExecutableArchitectureARM64
+        #else
+        let native = NSBundleExecutableArchitectureX86_64
+        #endif
+        let archs = Bundle(url: app)?.executableArchitectures?.map(\.intValue) ?? []
+        return archs.contains(native)
     }
 
     static func run(_ exe: String, _ args: [String]) async throws -> String {

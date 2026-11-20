@@ -1,6 +1,6 @@
 # Air01 Control
 
-A tiny native macOS app (~560 KB, SwiftUI + IOKit, no dependencies) for the Akko Air01's
+An unofficial, tiny native macOS app (SwiftUI + IOKit, no dependencies) for the Akko Air01's
 built-in settings: backlight and side-light effect, colour, saturation, brightness, speed and direction,
 active profile, debounce and sleep timers. It reads the current values from the keyboard and
 saves changes back automatically.
@@ -9,10 +9,17 @@ saves changes back automatically.
 
 Download `Air01-Control-<version>.zip` from the
 [latest release](https://github.com/muunkk/air01-control/releases/latest), unzip it, and move
-**Air01 Control.app** to `~/Applications`. After that, the app updates itself: it checks on
-launch, and the footer button or **Air01 Control → Check for Updates…** installs a new
-version and relaunches. The repo is private, so checking uses the GitHub CLI login on this
-Mac (`brew install gh && gh auth login`).
+**Air01 Control.app** to `~/Applications`. Needs macOS 14 or later; runs natively on Apple
+Silicon and Intel.
+
+The app isn't notarized, so the first launch is blocked. Open it once, then go to
+**System Settings → Privacy & Security** and click **Open Anyway**. Then allow it under
+**Privacy & Security → Input Monitoring**, which it needs to talk to the keyboard. After an
+update macOS may ask again; if the app can't reach the keyboard, remove it from that list and
+allow it again.
+
+After that, the app updates itself: it checks GitHub Releases on launch, and the footer button
+or **Air01 Control → Check for Updates…** installs a new version and relaunches.
 
 ## Use
 
@@ -29,14 +36,14 @@ Mac (`brew install gh && gh auth login`).
 - Writes are enabled only for the hardware revision confirmed to use this protocol
   (identify ID **4010**, USB `38ee:0005`). Other Air01 revisions (IDs 3013, 3452, 3658, 3818)
   are shown read-only.
-- No firmware, flash-erase, bootloader, factory-reset or keymap commands exist in the code.
+- No firmware, flash-erase, bootloader, factory-reset or keymap-write commands exist in the code.
 - The app keeps at least 1 s of quiet after every save, because the firmware commits each
   setting to flash and traffic during a commit can lock up the USB endpoint.
 
 ## Build and release
 
 ```sh
-./build.sh           # -> build/Air01 Control.app (version from ./VERSION)
+./build.sh           # -> build/Air01 Control.app, universal (version from ./VERSION)
 ./build.sh install   # also copies it to ~/Applications
 ./release.sh "notes" # on an up-to-date main: zip the app, publish GitHub release v<VERSION>
 ```
@@ -54,5 +61,30 @@ Diagnostics (from the built binary in `Contents/MacOS/Air01Control`):
 - `--selftest` checks the packet encoder and decoder.
 - `--snapshot <dir>` renders the UI offscreen to PNGs.
 
+Building needs the Xcode Command Line Tools (`xcode-select --install`).
+
+## Credits
+
 Protocol facts come from the open-source [sharkfin](https://github.com/dniminenn/sharkfin)
-project's `docs/PROTOCOL.md` and its device registry. No sharkfin code is included.
+project (GPL-3.0-or-later): its `docs/PROTOCOL.md`, its device registry, and the Air01's
+lighting-effect lists in `app/src-tauri/data/light-layouts.json`. No sharkfin code is included.
+
+## Disclaimer
+
+Air01 Control is an independent project. It is not affiliated with, endorsed by or supported
+by Akko. "Akko" and "Air01" are used only to say which keyboard it works with.
+
+The app writes settings to the keyboard's flash memory using a protocol worked out by the
+community, not published by Akko. It is provided as is, without any warranty; you use it at
+your own risk. See sections 15 and 16 of the license.
+
+## License
+
+Copyright (C) 2026 Mel Boonchan. Licensed under [GPL-3.0-or-later](LICENSE). The license
+applies to every version in this repository's history, including earlier commits, branches,
+pull requests and releases. Material derived from other projects keeps its original copyright
+and notices.
+
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version.

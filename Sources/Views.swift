@@ -22,7 +22,13 @@ struct ContentView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .alert(alertTitle, isPresented: $updater.showResult) {
             if case .available = updater.state {
-                Button("Install and Relaunch") { Task { await updater.install() } }
+                Button("Install and Relaunch") {
+                    Task {
+                        // Let this alert finish closing so a failure alert can show.
+                        try? await Task.sleep(for: .milliseconds(300))
+                        await updater.install()
+                    }
+                }
                 Button("Later", role: .cancel) {}
             } else if case .failed = updater.state {
                 Button("Open Releases Page") { NSWorkspace.shared.open(Updater.releasesURL) }
@@ -37,15 +43,15 @@ struct ContentView: View {
 
     private var alertTitle: String {
         switch updater.state {
-        case .available(let v, _): return "Air01 Control \(v) is available"
-        case .failed: return "Couldn't check for updates"
+        case .available(let v, _, _): return "Air01 Control \(v) is available"
+        case .failed: return updater.installFailed ? "Update failed" : "Couldn't check for updates"
         default: return "You're up to date"
         }
     }
 
     private var alertMessage: String {
         switch updater.state {
-        case .available(_, let notes): return notes.isEmpty ? "You have \(updater.currentVersion)." : notes
+        case .available(_, let notes, _): return notes.isEmpty ? "You have \(updater.currentVersion)." : notes
         case .failed(let msg): return msg
         default: return "Air01 Control \(updater.currentVersion) is the latest version."
         }
@@ -67,7 +73,7 @@ private struct UpdateFooter: View {
             case .installing:
                 ProgressView().controlSize(.small)
                 Text("Installing update…").font(.caption).foregroundStyle(.secondary)
-            case .available(let v, _):
+            case .available(let v, _, _):
                 Button("Update to \(v)") { Task { await updater.install() } }
                     .buttonStyle(.borderedProminent).controlSize(.small)
             default:

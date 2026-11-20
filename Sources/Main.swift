@@ -69,7 +69,7 @@ enum Snapshotter {
             let model = KeyboardModel(preview: ())
             model.loadSample(link: link)
             let updater = Updater()
-            if name == "settings-dark" { updater.state = .available(version: "1.2.0", notes: "") }
+            if name == "settings-dark" { updater.state = .available(version: "1.2.0", notes: "", download: Updater.releasesURL) }
             let host = NSHostingView(rootView: ContentView(model: model, updater: updater))
             host.appearance = NSAppearance(named: look)
             let size = NSSize(width: 460, height: link == .usb ? 1240 : 560)
