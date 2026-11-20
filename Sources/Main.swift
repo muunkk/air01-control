@@ -57,29 +57,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 enum Snapshotter {
+    /// Renders the UI offscreen at 2x. The settings-* shots show the whole form;
+    /// the readme-* shots use the normal window height.
     static func render(to dir: String) {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
-        let states: [(String, KeyboardModel.Link, NSAppearance.Name)] = [
-            ("settings-light", .usb, .aqua),
-            ("settings-dark", .usb, .darkAqua),
-            ("bluetooth", .bluetoothOnly("Air01 BT2"), .aqua),
+        let states: [(String, KeyboardModel.Link, NSAppearance.Name, CGFloat)] = [
+            ("settings-light", .usb, .aqua, 1240),
+            ("settings-dark", .usb, .darkAqua, 1240),
+            ("bluetooth", .bluetoothOnly("Air01 BT2"), .aqua, 560),
+            ("readme-light", .usb, .aqua, 720),
+            ("readme-dark", .usb, .darkAqua, 720),
         ]
-        for (name, link, look) in states {
+        for (name, link, look, height) in states {
             let model = KeyboardModel(preview: ())
             model.loadSample(link: link)
             let updater = Updater()
-            if name == "settings-dark" { updater.state = .available(version: "1.2.0", notes: "", download: Updater.releasesURL) }
+            if name == "settings-dark" { updater.state = .available(version: "9.9.9", notes: "", download: Updater.releasesURL) }
             let host = NSHostingView(rootView: ContentView(model: model, updater: updater))
             host.appearance = NSAppearance(named: look)
-            let size = NSSize(width: 460, height: link == .usb ? 1240 : 560)
+            let size = NSSize(width: 460, height: height)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: look)
             window.contentView = host
             host.frame = NSRect(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { continue }
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * 2,
+                                             pixelsHigh: Int(size.height) * 2, bitsPerSample: 8,
+                                             samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = size
             host.cacheDisplay(in: host.bounds, to: rep)
             let path = (dir as NSString).appendingPathComponent("\(name).png")
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))

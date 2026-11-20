@@ -37,7 +37,7 @@ final class KeyboardModel: ObservableObject {
     func loadSample(link: Link) {
         self.link = link
         guard link == .usb else { return }
-        kind = .air01Gen2; deviceID = 4010; firmware = "3.09"
+        kind = .air01Gen2; deviceID = 4010; firmware = "1.07"
         led = Lighting(mode: 4, speed: 3, brightness: 4, option: 0, rainbow: false, r: 0, g: 120, b: 255)
         side = Lighting(mode: 2, speed: 2, brightness: 3, option: 0, rainbow: true, r: 255, g: 0, b: 0)
         profile = 0; debounce = 5; autoOS = true
