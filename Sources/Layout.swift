@@ -1,6 +1,9 @@
 // Akko Air01 (device 4010) physical layout: key positions and factory slot values.
-// Data from sharkfin's Local83_Akko_Air01.json (GPL-3.0-or-later, owner-confirmed);
-// all 84 slots were checked against a real board's keymap read before use.
+// Data from sharkfin's Local83_Akko_Air01.json (GPL-3.0-or-later, owner-confirmed),
+// https://github.com/dniminenn/sharkfin at 55fb3718bbb28423abd19063bce5450b1a2e06ef.
+// Modified 2026-11-19: converted from JSON to this Swift table (fields renamed,
+// hidden slot split out). All 84 slots were checked against a real board's keymap
+// read before use. This file is distributed under GPL-3.0-or-later; see LICENSE.
 import CoreGraphics
 
 struct PhysicalKey: Identifiable {
