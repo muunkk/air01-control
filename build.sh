@@ -27,11 +27,23 @@ done
 lipo -create build/Air01Control-arm64 build/Air01Control-x86_64 -output "$BIN"
 rm -f build/Air01Control-arm64 build/Air01Control-x86_64
 
-# Ad-hoc sign (no Apple Developer ID). macOS ties Input Monitoring to this
-# build's code hash, so a new build may need the permission granted again.
-codesign --force --sign - --identifier io.github.muunkk.air01control "$APP" >/dev/null
+# Sign with a Developer ID (hardened runtime, secure timestamp) so release.sh
+# can notarize it. SIGN_IDENTITY picks the certificate; by default it's the
+# first "Developer ID Application" in the keychain. Without one (a contributor
+# build), fall back to ad-hoc signing, which runs locally but can't be notarized.
+IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)}"
+if [[ -n "$IDENTITY" && "$IDENTITY" != "-" ]]; then
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+    --identifier io.github.muunkk.air01control "$APP" >/dev/null
+  SIGNED="$IDENTITY"
+else
+  codesign --force --sign - --identifier io.github.muunkk.air01control "$APP" >/dev/null
+  SIGNED="ad-hoc"
+fi
+codesign --verify --strict "$APP"
 
-echo "Built $APP v$VERSION ($(du -sh "$APP" | cut -f1))"
+echo "Built $APP v$VERSION ($(du -sh "$APP" | cut -f1)), signed: $SIGNED"
 
 if [[ "${1:-}" == "install" ]]; then
   mkdir -p ~/Applications
