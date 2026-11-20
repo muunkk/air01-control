@@ -31,8 +31,9 @@ codesign -dvv "$APP" 2>&1 | grep -q "^Authority=Developer ID Application" \
 rm -f "$ZIP"
 ditto -c -k --norsrc --keepParent "$APP" "$ZIP"
 echo "Notarizing (usually a few minutes)…"
-xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait --timeout 30m \
-  | tee /dev/stderr | grep -q "status: Accepted" || { echo "Notarization failed."; exit 1; }
+RESULT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait --timeout 30m 2>&1)" || true
+echo "$RESULT"
+[[ "$RESULT" == *$'\n  status: Accepted'* ]] || { echo "Notarization failed (see: xcrun notarytool log <id> --keychain-profile $PROFILE)."; exit 1; }
 xcrun stapler staple "$APP"
 spctl -a -t exec -vv "$APP"
 # Re-zip so the download carries the stapled ticket (works offline).
